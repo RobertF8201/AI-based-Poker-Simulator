@@ -609,6 +609,12 @@ def betting_round(active_players, pot, holes):
         nonlocal pending
         pending = set(p.name for p in active_players if p.name != raiser_name)
 
+    # all-in/only 1 player has chips
+    can_bet_cnt = sum(1 for p in active_players if p.money > 0)
+    if can_bet_cnt < 2:
+        print('-----------------------------------------------------------')
+        return pot, None
+
     while len(active_players) > 1:
         if not pending:
             break
@@ -620,15 +626,19 @@ def betting_round(active_players, pot, holes):
         to_call = max_in_round - contrib[player.name]  # amount to call
         stack = player.money    # player stack
 
-        print(f"{player.name} turn, hold[{fmt_cards([])}]. To call: {to_call}. Stack: {stack}") 
+        print(f"{player.name} turn, hold[{fmt_cards(holes[player.name])}]. To call: {to_call}. Stack: {stack}") 
+
+        can_bet_cnt = sum(1 for p in active_players if p.money > 0)
+        if can_bet_cnt < 2 and to_call == 0 and not opened:
+            print('-----------------------------------------------------------')
+            return pot, None
 
         # if no one opened
         if to_call == 0 and not opened:
-            action = input("[check/bet]: ").strip().lower()
+            action = input("[check/bet/all-in]: ").strip().lower()
             if action == "check":
                 print(f"{player.name} checks.")
-                if name in pending:
-                    pending.discard(name)   
+                pending.discard(name)
                 actor = (actor + 1) % len(active_players)
                 continue
             elif action == "bet":
@@ -644,6 +654,21 @@ def betting_round(active_players, pot, holes):
                 reset_pending_after_raise(name) # reset 
                 actor = (actor + 1) % len(active_players)
                 continue
+            elif action in ("allin", "all-in", "all in"):
+                amt = stack
+                if amt <= 0:
+                    print("You have no chips.")
+                    pending.discard(name)
+                    actor = (actor + 1) % len(active_players)
+                    continue
+                player.money = 0
+                contrib[name] += amt
+                pot += amt
+                opened = True
+                last_raise = amt 
+                reset_pending_after_raise(name)
+                actor = (actor + 1) % len(active_players)
+                continue
             else:
                 print("Invalid input.")
                 continue  
@@ -651,9 +676,8 @@ def betting_round(active_players, pot, holes):
             action = input("[fold/call/raise]: ").strip().lower()
             if action == "fold":
                 print(f"{name} folds.")
-                if name in pending:
-                    pending.discard(name) 
-                del contrib[player.name]
+                pending.discard(name)
+                del contrib[name]
                 active_players.remove(player)
                 if len(active_players) == 1:
                     winner = active_players[0]
@@ -668,8 +692,7 @@ def betting_round(active_players, pot, holes):
                 player.money -= pay  
                 contrib[player.name] += pay
                 pot += pay
-                if name in pending:
-                    pending.discard(name)  
+                pending.discard(name)  
                 actor = (actor + 1) % len(active_players)
                 continue
             elif action == "raise":
@@ -689,6 +712,30 @@ def betting_round(active_players, pot, holes):
                 last_raise = raise_amt
                 opened = True
                 reset_pending_after_raise(name) # reset 
+                actor = (actor + 1) % len(active_players)
+                continue
+            elif action in ("allin", "all-in", "all in"):
+                # all in, pay = stack
+                if stack <= 0:
+                    print("You have no chips.")
+                    pending.discard(name)
+                    actor = (actor + 1) % len(active_players)
+                    continue
+
+                pay = stack
+                raise_amt = max(0, pay - to_call)  # raise amount could be 0 or not enough
+                player.money = 0
+                contrib[name] += pay
+                pot += pay
+
+                # check is reopen action
+                if raise_amt >= last_raise and to_call > 0:
+                    last_raise = raise_amt
+                    opened = True
+                    reset_pending_after_raise(name)
+                else:
+                    pending.discard(name)
+
                 actor = (actor + 1) % len(active_players)
                 continue
             else:
