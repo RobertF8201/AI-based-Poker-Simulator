@@ -506,7 +506,7 @@ class Score:
         # same score
         return 0
 
-class PokerScoreCalculator:
+class PokerScoreDetector:
     def __init__(self, lowest_rank=2): 
         self._lowest_rank=lowest_rank
 
@@ -597,64 +597,234 @@ def ask_raise_size(max_amt, min_raise):
             continue
         return v
 
-def betting_round(active_players, pot):
+def betting_round(active_players, pot, holes):
     contrib = {p.name: 0 for p in active_players}   # bet amount in current round
     opened = False  # is someone opened(start bet)
     last_raise = MIN_BET    # init last raise
 
     actor = 0  # actor index init
+    pending = set(p.name for p in active_players)
+
+    def reset_pending_after_raise(raiser_name: str):
+        nonlocal pending
+        pending = set(p.name for p in active_players if p.name != raiser_name)
 
     while len(active_players) > 1:
+        if not pending:
+            break
+
         player = active_players[actor]
-        to_call = max(contrib.values()) - contrib[player.name]  # amount to call
+        name = player.name
+
+        max_in_round = max(contrib[p.name] for p in active_players) if active_players else 0
+        to_call = max_in_round - contrib[player.name]  # amount to call
         stack = player.money    # player stack
 
-        print(f"{player.name} turn. To call: {to_call}. Stack: {stack}")
-        # --------------------华丽的分割线-----------------------------
-        # --- 处理玩家行动 ---
+        print(f"{player.name} turn, hold[{fmt_cards([])}]. To call: {to_call}. Stack: {stack}") 
+
+        # if no one opened
         if to_call == 0 and not opened:
             action = input("[check/bet]: ").strip().lower()
             if action == "check":
                 print(f"{player.name} checks.")
+                if name in pending:
+                    pending.discard(name)   
+                actor = (actor + 1) % len(active_players)
+                continue
             elif action == "bet":
                 amt = ask_bet_amount(max_amt=stack, min_amt=MIN_BET)
+                if amt <= MIN_BET or amt > stack:
+                    print("Invalid bet size.")
+                    continue
+                player.money -= amt   
                 contrib[player.name] += amt
                 pot += amt
                 opened = True
                 last_raise = amt
-                last_aggressor = player
+                reset_pending_after_raise(name) # reset 
+                actor = (actor + 1) % len(active_players)
+                continue
             else:
                 print("Invalid input.")
-        else:
-            # 有下注要跟
+                continue  
+        else:   # someone opened
             action = input("[fold/call/raise]: ").strip().lower()
             if action == "fold":
-                print(f"{player.name} folds.")
+                print(f"{name} folds.")
+                if name in pending:
+                    pending.discard(name) 
+                del contrib[player.name]
                 active_players.remove(player)
                 if len(active_players) == 1:
                     winner = active_players[0]
                     print(f"{winner.name} wins the pot!")
                     return pot, winner
+                continue
             elif action == "call":
                 pay = min(to_call, stack)
+                if pay < 0:
+                    print("Invalid call.")
+                    continue
+                player.money -= pay  
                 contrib[player.name] += pay
                 pot += pay
+                if name in pending:
+                    pending.discard(name)  
+                actor = (actor + 1) % len(active_players)
+                continue
             elif action == "raise":
+                max_raise_cap = max(0, stack - to_call)
+                if max_raise_cap < last_raise:
+                    print("You don't have enough chips to raise; try call/fold.")
+                    continue
                 raise_amt = ask_raise_size(max_amt=stack - to_call, min_raise=last_raise)
+                if raise_amt < last_raise or raise_amt > max_raise_cap:
+                    print("Invalid raise size.")
+                    continue
+                
                 pay = to_call + raise_amt
+                player.money -= pay
                 contrib[player.name] += pay
                 pot += pay
                 last_raise = raise_amt
-                last_aggressor = player
+                opened = True
+                reset_pending_after_raise(name) # reset 
+                actor = (actor + 1) % len(active_players)
+                continue
+            else:
+                print("Invalid input.")
+                continue  
+    
+    print('-----------------------------------------------------------')
 
-        # 检查是否所有玩家投入额相等（行动完成）
-        if len(set(contrib[p.name] for p in active_players)) == 1 and opened:
-            break
+    return pot, None  # no one win, go to next street
 
-        # 下一位玩家
-        actor = (actor + 1) % len(active_players)
+def showdown(detector, 
+             active_players: List['Player'], 
+             holes: Dict[str, List['Card']], 
+             board: List['Card']) -> Tuple[List['Player'], Dict[str, 'Score']]:
 
-    return pot, None  # 若无人弃牌，返回 None 表示继续下一街
+    if not active_players:
+        return [], {}
+
+    # calculate active player's holes + board
+    scores: Dict[str, 'Score'] = {}
+    for p in active_players:
+        hole = holes.get(p.name, [])
+        scores[p.name] = detector.get_score(hole + board)
+
+    # find current best player
+    best_player = active_players[0]
+    for p in active_players[1:]:
+        if scores[p.name].cmp(scores[best_player.name]) > 0:
+            best_player = p
+
+    # share the pot
+    winners = [p for p in active_players if scores[p.name].cmp(scores[best_player.name]) == 0]
+    return winners, scores
+
+def fmt_board(board: List['Card']) -> str:
+    return fmt_cards(board) if board else "(null)"
+
+CAT_NAMES_HOLDEM = [
+    "High Card",
+    "One Pair",
+    "Two Pair",
+    "Three of a Kind",
+    "Straight",
+    "Full House",
+    "Flush",
+    "Four of a Kind",
+    "Straight Flush"
+]
+
+def play_hand_multi(active_players: List['Player'], lowest_rank: int = 2) -> bool:
+
+    def win(winner, pot):
+        if winner:
+            print(f"{winner.name} win the pot {pot}.")
+            winner.money += pot
+            return True
+        
+    # player with no money
+    active_players = [p for p in active_players if p.money > 0]
+    if len(active_players) < 2:
+        print("player not enough")
+        return False
+
+    pot = 0
+    # ante(1 for each)
+    for p in list(active_players):
+        if p.money <= 0:
+            continue
+        ante_amt = min(1, p.money)
+        p.money -= ante_amt
+        pot += ante_amt
+
+    deck = Deck(lowest_rank=lowest_rank)
+    detector = PokerScoreDetector()
+
+    holes: Dict[str, List[Card]] = {}
+    for p in active_players:
+        holes[p.name] = deck.pop_cards(2)
+
+    board: List[Card] = []
+
+    print(f"Player: {', '.join(p.name for p in active_players)}  | pot: {pot}")
+    for p in active_players:
+        print(f"{p.name} holes: {fmt_cards(holes[p.name])}")
+
+    # Preflop
+    pot, winner = betting_round(active_players, pot, holes)
+    win(winner, pot)
+
+    # Flop
+    board += deck.pop_cards(3)
+    print("Phase: Flop")
+    print("Borad: ", fmt_board(board))
+    pot, winner = betting_round(active_players, pot, holes)
+    win(winner, pot)
+
+    # Turn
+    board += deck.pop_cards(1)
+    print("Phase: Turn")
+    print("Borad: ", fmt_board(board))
+    pot, winner = betting_round(active_players, pot, holes)
+    win(winner, pot)
+
+
+    # River
+    board += deck.pop_cards(1)
+    print("Phase: River")
+    print("Borad: ", fmt_board(board))
+    pot, winner = betting_round(active_players, pot, holes)
+    win(winner, pot)
+
+    # —— showdown ——
+    print("—— showdown ——")
+    for p in active_players:
+        print(f"{p.name} holes: {fmt_cards(holes[p.name])}")
+    print("Board: ", fmt_board(board))
+
+    winners, scores = showdown(detector, active_players, holes, board)
+
+    # show category
+    for p in active_players:
+        s = scores[p.name]
+        print(f"{p.name} category: {CAT_NAMES_HOLDEM[s.category]}")
+
+    if len(winners) == 1:
+        w = winners[0]
+        print(f"{w.name} win, get pot {pot}.")
+        w.money += pot
+    else:
+        split = pot // len(winners)
+        remainder = pot - split * len(winners)
+        names = ", ".join(p.name for p in winners)
+        print(f"Share pot: {names} get {split}" + (f", reminder {remainder} to first {winners[0].name}" if remainder else ""))
+        for i, w in enumerate(winners):
+            w.money += split + (remainder if i == 0 else 0)
+    return True
 
 ### prompt
 def prompt_builder(
@@ -706,11 +876,12 @@ if __name__ == '__main__':
     # print(ch._get_straight(ch._sorted))
     # t = SimplePlayer('test', 100)
     # print_state(t, 100, 'PreFlop')
-    prompt = prompt_builder("Preflop", 
-                            [Card(14,1), Card(14,2)], 
-                            [],
-                            100,
-                            2,
-                            [Player('alice', 100)])
-    resp = llm.invoke(prompt)
-    print(resp.content) # {"action": "raise", "amount": 6}
+    # prompt = prompt_builder("Preflop", 
+    #                         [Card(14,1), Card(14,2)], 
+    #                         [],
+    #                         100,
+    #                         2,
+    #                         [Player('alice', 100)])
+    # resp = llm.invoke(prompt)
+    # print(resp.content) # {"action": "raise", "amount": 6}
+    pass
