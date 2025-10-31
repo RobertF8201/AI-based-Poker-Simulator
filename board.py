@@ -1,264 +1,76 @@
-import os, json, requests
-from typing import List, Dict, Callable, Tuple, Optional
-from holdem import fmt_card, Card, fmt_cards,Player,ask_bet_amount,ask_raise_size,Deck,PokerScoreDetector,fmt_board,showdown,CAT_NAMES_HOLDEM
+from typing import Dict, List, Tuple
 
-MIN_BET = 5  # 你的项目里已有就复用
+from state import MIN_BET, CAT_NAMES_HOLDEM
+from agent import agent_policy
+from entities import Card, Deck, Score, Player, PokerScoreDetector, fmt_cards
 
-# ============= 你已有的依赖（此处只列名，实际从你项目导入） =============
-# from your_project import Deck, Card, Player, PokerScoreDetector, showdown
-# from your_project import fmt_cards, fmt_board, CAT_NAMES_HOLDEM
-# from your_project import ask_bet_amount, ask_raise_size
-# ================================================================
+def fmt_board(board: List['Card']) -> str:
+    return fmt_cards(board) if board else "(null)"
 
+def ask_int(prompt):
+    s = input(prompt).strip()
+    if s == "": 
+        return None
+    if s.isdigit(): 
+        return int(s)
+    try: 
+        return int(s)
+    except: 
+        return None
 
-# ------------------ 1) LLM 客户端最小封装（Anthropic 兼容） ------------------
-class AnthropicClient:
-    """
-    极简调用封装。你也可以直接用你现有的 ChatAnthropic 对象：
-        llm = ChatAnthropic(model=..., api_key=..., base_url=..., temperature=0)
-    然后把 llm.complete(prompt) 作为回调传进来即可。
-    """
-    def __init__(self, api_key=None, base_url="https://yinli.one", model="claude-3-5-sonnet-20241022", temperature=0):
-        self.api_key = "sk-91muMTPMVB6nol36k9jTzZGttnHpRqANPayqpFFa5ZomzjFI"
-        self.model = model
-        self.temperature = temperature
-        self.base_url = "https://yinli.one"
+def ask_bet_amount(max_amt, min_amt):
+    while True:
+        v = ask_int(f"Enter your bet amount ({min_amt} - {max_amt}): ")
+        if v is None:
+            print("Please enter an integer amount.")
+            continue
+        if v < min_amt:
+            print(f"The bet cannot be lower than the minimum amount ({min_amt}).")
+            continue
+        if v > max_amt:
+            print(f"The bet cannot exceed your remaining chips ({max_amt}).")
+            continue
+        return v
 
-    def complete(self, prompt: str) -> str:
-        """
-        返回模型的纯文本输出（期望是一行 JSON）。如果你用自己代理（如 https://yinli.one），
-        请改造为那个网关的messages/complete接口即可。
-        """
-        # 下面是伪/示例实现，你需要根据你的网关契约调整：
-        url = f"{self.base_url}/v1/messages"
-        headers = {
-            "content-type": "application/json",
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01"
-        }
-        data = {
-            "model": self.model,
-            "max_tokens": 64,
-            "temperature": self.temperature,
-            "messages": [
-                {"role": "user", "content": prompt}
-            ]
-        }
-        try:
-            resp = requests.post(url, headers=headers, json=data, timeout=30)
-            resp.raise_for_status()
-            js = resp.json()
-            # 取第一段文本
-            content = js.get("content", [])
-            if content and isinstance(content, list):
-                txt = "".join([seg.get("text", "") for seg in content if isinstance(seg, dict)])
-                return txt.strip()
-            return ""
-        except Exception as e:
-            # 出错返回安全兜底
-            return '{"action":"check","amount":0}'
+def ask_raise_size(max_amt, min_raise):
+    while True:
+        v = ask_int(f"Enter your raise size (excluding the call amount), minimum {min_raise}, maximum {max_amt}: ")
+        if v is None:
+            print("Please enter an integer amount.")
+            continue
+        if v < min_raise:
+            print(f"The raise size cannot be smaller than {min_raise}.")
+            continue
+        if v > max_amt:
+            print(f"The raise size cannot exceed your remaining chips ({max_amt}).")
+            continue
+        return v
 
+def showdown(detector, 
+             active_players: List['Player'], 
+             holes: Dict[str, List['Card']], 
+             board: List['Card']) -> Tuple[List['Player'], Dict[str, 'Score']]:
 
-# ------------------ 2) 为“单个 AI”构造安全提示词（只见自家底牌） ------------------
-def build_agent_prompt_multi(
-    agent_name: str,
-    street: str,
-    holes: Dict[str, List['Card']],
-    board: List['Card'],
-    stacks: Dict[str, int],
-    pot: int,
-    all_player_order: List[str],
-    *,
-    to_call_for_me: int,
-    opened: bool,
-    last_raise: int,
-    min_bet: int,
-) -> str:
-    hole_txt_me = fmt_cards(holes.get(agent_name, [])) if holes.get(agent_name) else "(unknown)"
-    board_txt = fmt_cards(board) if board else "(no board)"
+    if not active_players:
+        return [], {}
 
-    lines = []
-    for name in all_player_order:
-        chips = stacks.get(name, 0)
-        if name == agent_name:
-            lines.append(f"  - {name}: {chips} chips, hole: {hole_txt_me}")
-        else:
-            lines.append(f"  - {name}: {chips} chips, hole: ??")
+    # calculate active player's holes + board
+    scores: Dict[str, 'Score'] = {}
+    for p in active_players:
+        hole = holes.get(p.name, [])
+        scores[p.name] = detector.get_score(hole + board)
 
-    others_txt = "\n".join(lines) if lines else "(no opponents)"
+    # find current best player
+    best_player = active_players[0]
+    for p in active_players[1:]:
+        if scores[p.name].cmp(scores[best_player.name]) > 0:
+            best_player = p
 
-    prompt = f"""You are a poker decision agent for player: {agent_name}.
-Game: No-Limit Texas Hold'em (multiway). Opponents' hole cards are unknown and must be treated as ??.
+    # share the pot
+    winners = [p for p in active_players if scores[p.name].cmp(scores[best_player.name]) == 0]
+    return winners, scores
 
-Current state:
-- Street: {street}
-- Pot: {pot}
-- Community board: {board_txt}
-- Table (order & stacks; only YOUR hole is shown):
-{others_txt}
-
-Action constraints (VERY IMPORTANT):
-- to_call_for_you: {to_call_for_me}
-- opened (has bet in this round): {str(opened).lower()}
-- last_raise_size (if opened): {last_raise}
-- MIN_BET (if no one opened): {min_bet}
-- Your stack: {stacks.get(agent_name, 0)}
-
-Output exactly ONE LINE JSON, schema:
-{{"action":"check|bet|call|raise|fold","amount":<integer>}}
-
-Rules you MUST follow:
-- If to_call_for_you == 0 and not opened: you may "check" or "bet".
-  * For "bet", amount >= MIN_BET and <= your stack.
-- If to_call_for_you > 0 (someone opened): you may "call" / "raise" / "fold".
-  * Do NOT output "bet" or "check" here.
-  * For "raise", amount MUST equal your TOTAL chips to put in THIS TURN = to_call_for_you + raise_size,
-    where raise_size >= last_raise_size and raise_size <= (your stack - to_call_for_you).
-- For "check"/"fold"/"call": set amount = 0.
-- No explanations, no extra text. JSON ONLY on one line.
-
-Your hole cards (for YOU only): {hole_txt_me}
-Now output your decision JSON:
-"""
-    return prompt
-
-
-# ------------------ 3) 解析/调用 LLM ------------------
-import re, json
-from typing import Dict, Tuple, Optional
-
-_JSON_RE = re.compile(r'\{[^{}]+\}')
-
-def parse_agent_action(raw: str) -> Dict:
-    if not raw:
-        return {"action": "check", "amount": 0}
-    raw = raw.strip()
-    if raw.startswith("```"):
-        parts = [ln for ln in raw.splitlines() if not ln.strip().startswith("```")]
-        raw = " ".join(parts).strip()
-    m = _JSON_RE.search(raw)
-    if m:
-        raw = m.group(0)
-    try:
-        obj = json.loads(raw)
-    except Exception:
-        return {"action": "check", "amount": 0}
-    action = str(obj.get("action", "")).lower().strip()
-    try:
-        amount = int(obj.get("amount", 0))
-    except Exception:
-        amount = 0
-    return {"action": action, "amount": amount}
-
-
-def normalize_action_ctx(
-    action: str,
-    amount: int,
-    *,
-    to_call: int,
-    opened: bool,
-    last_raise: int,
-    min_bet: int,
-    stack: int
-) -> Tuple[str, int, Optional[str]]:
-    a = (action or "").lower()
-    reason = None
-
-    legal = {"check","bet","call","raise","fold","allin","all-in","all in"}
-    if a not in legal:
-        if to_call == 0 and not opened:
-            return "check", 0, "illegal->check"
-        else:
-            if stack >= to_call and to_call > 0:
-                return "call", 0, "illegal->call"
-            return "fold", 0, "illegal->fold"
-
-    if a in ("allin","all-in","all in"):
-        return "all-in", stack, None
-
-    if to_call == 0 and not opened:
-        if a == "check":
-            return "check", 0, None
-        if a == "bet":
-            amt = max(min_bet, min(amount, stack))
-            if amt < min_bet or amt > stack:
-                return "check", 0, "bad-bet->check"
-            return "bet", amt, None
-        return "check", 0, "bad-preflop-action->check"
-
-    if a == "check":
-        if stack >= to_call and to_call > 0:
-            return "call", 0, "check->call"
-        return "fold", 0, "check->fold"
-
-    if a == "bet":
-        a = "raise"
-        reason = "bet->raise"
-
-    if a == "call":
-        return "call", 0, None
-
-    if a == "fold":
-        return "fold", 0, None
-
-    if a == "raise":
-        max_cap = max(0, stack - to_call)
-        raise_amt = amount - to_call
-        if raise_amt < last_raise or raise_amt > max_cap:
-            if stack >= to_call and to_call > 0:
-                return "call", 0, "illegal-raise->call"
-            return "fold", 0, "illegal-raise->fold"
-        return "raise", amount, reason
-
-    if stack >= to_call and to_call > 0:
-        return "call", 0, "fallback->call"
-    return "check", 0, "fallback->check"
-
-def agent_policy_multi(
-    agent_name: str,
-    street: str,
-    holes: Dict[str, List['Card']],
-    board: List['Card'],
-    stacks: Dict[str, int],
-    pot: int,
-    order: List[str],
-    *,
-    to_call_for_me: int,
-    opened: bool,
-    last_raise: int,
-    min_bet: int,
-    agent_complete,  # Callable[[str], str]
-) -> Dict:
-    """
-    统一：构造带上下文 prompt -> 调 LLM -> 解析 -> 规范化（永不返回非法动作）
-    返回 {"action": str, "amount": int}
-    """
-    prompt = build_agent_prompt_multi(
-        agent_name=agent_name,
-        street=street,
-        holes=holes,
-        board=board,
-        stacks=stacks,
-        pot=pot,
-        all_player_order=order,
-        to_call_for_me=to_call_for_me,
-        opened=opened,
-        last_raise=last_raise,
-        min_bet=min_bet,
-    )
-
-    raw = agent_complete(prompt)
-    decision = parse_agent_action(raw)
-
-    action, desired_amt, _why = normalize_action_ctx(
-        decision["action"], int(decision.get("amount", 0)),
-        to_call=to_call_for_me, opened=opened, last_raise=last_raise,
-        min_bet=min_bet, stack=stacks.get(agent_name, 0)
-    )
-    return {"action": action, "amount": desired_amt}
-
-# ------------------ 4) 下注轮：1 人类 + N AI ------------------
-def betting_round_human_vs_multi_agents(
+def betting_round(
     active_players: List['Player'],
     pot: int,
     holes: Dict[str, List['Card']],
@@ -292,7 +104,7 @@ def betting_round_human_vs_multi_agents(
     while len(active_players) > 1:
         loops += 1
         if loops > MAX_ITER:
-            print("🛑 Safety break: too many iterations, forcing round end.")
+            print("Safety break: too many iterations, forcing round end.")
             break
         if not pending:
             break
@@ -306,17 +118,14 @@ def betting_round_human_vs_multi_agents(
         to_call = max_in_round - contrib[name]
         stack = player.money
 
-        # ✅ 只在人类回合打印含底牌的提示；Bot 不打印“turn/hold/stack/to_call”
         if name == human_name:
             hole_view = fmt_cards(holes[name])
             print(f"{name} turn, hold[{hole_view}]. To call: {to_call}. Stack: {stack}")
 
-        # 无人可下注 + 未开池 + 无需跟注 → 结束本轮
         if sum(1 for p in active_players if p.money > 0) < 2 and to_call == 0 and not opened:
             print('-----------------------------------------------------------')
             return pot, None
 
-        # ===== 决策（人/机） =====
         if name == human_name:
             if to_call == 0:
                 action = input("[check/bet/all-in]: ").strip().lower()
@@ -325,9 +134,8 @@ def betting_round_human_vs_multi_agents(
                 action = input(f"[fold/call/raise/all-in] (must call {to_call} to stay): ").strip().lower()
                 desired_amt = 0
         else:
-            # —— AI：带上下文 prompt，仅看自己底牌 —— #
             stacks_now = stacks_snapshot()
-            decision = agent_policy_multi(
+            decision = agent_policy(
                 agent_name=name,
                 street=street,
                 holes=holes,
@@ -344,7 +152,6 @@ def betting_round_human_vs_multi_agents(
             action = decision["action"]
             desired_amt = int(decision.get("amount", 0))
 
-        # ===== 执行动作（Bot 执行后才打印“动作摘要 + 全桌快照”） =====
         if to_call == 0 and not opened:
             if action == "check":
                 if name == human_name:
@@ -359,7 +166,6 @@ def betting_round_human_vs_multi_agents(
             elif action == "bet":
                 amt = desired_amt if name in agent_names else ask_bet_amount(max_amt=stack, min_amt=MIN_BET)
                 if amt < MIN_BET or amt > stack:
-                    # 人类：提示后重试；Bot：兜底为 check
                     if name == human_name:
                         print("Invalid bet size.")
                         continue
@@ -375,7 +181,6 @@ def betting_round_human_vs_multi_agents(
                 opened = True
                 last_raise = amt
                 reset_pending_after_raise(name)
-                # 摘要输出
                 print(f"{name} bets {amt}.")
                 if name != human_name:
                     print_stacks_and_pot()
@@ -406,7 +211,6 @@ def betting_round_human_vs_multi_agents(
                 continue
 
             else:
-                # 任意无效输入 → 兜底 check 并推进
                 if name == human_name:
                     print("Invalid input.")
                 else:
@@ -417,7 +221,6 @@ def betting_round_human_vs_multi_agents(
                 continue
 
         else:
-            # —— 已开池 —— #
             if action == "fold":
                 print(f"{name} folds.")
                 if name != human_name:
@@ -448,7 +251,6 @@ def betting_round_human_vs_multi_agents(
                 max_raise_cap = max(0, stack - to_call)
                 raise_amt = desired_amt - to_call if name in agent_names else ask_raise_size(max_amt=stack - to_call, min_raise=last_raise)
                 if raise_amt < last_raise or raise_amt > max_raise_cap:
-                    # 兜底 call/fold
                     if stack >= to_call and to_call > 0:
                         pay = to_call
                         player.money -= pay
@@ -481,7 +283,6 @@ def betting_round_human_vs_multi_agents(
                 last_raise = raise_amt
                 opened = True
                 reset_pending_after_raise(name)
-                # “raises to” 打印该玩家当街总投入
                 print(f"{name} raises to {contrib[name]}.")
                 if name != human_name:
                     print_stacks_and_pot()
@@ -516,7 +317,6 @@ def betting_round_human_vs_multi_agents(
                 continue
 
             else:
-                # 任意其它无效 → 兜底 call / fold
                 if stack >= to_call and to_call > 0:
                     pay = to_call
                     player.money -= pay
@@ -548,17 +348,13 @@ def betting_round_human_vs_multi_agents(
     print('-----------------------------------------------------------')
     return pot, None
 
-from typing import Tuple, Optional
-
-
-# ------------------ 5) 整手：1 人类 + N AI ------------------
-def play_hand_human_vs_multi_agents(
+def play_hand(
     human_name: str,
     agent_names: List[str],
     players: List['Player'],
     agent_complete,   # Callable[[str], str]
     lowest_rank: int = 2,
-    reveal_bots_at_showdown: bool = False,   # 👈 默认不展示 AI 底牌
+    reveal_bots_at_showdown: bool = False, 
 ) -> bool:
 
     def settle_early(winner, pot) -> bool:
@@ -588,15 +384,12 @@ def play_hand_human_vs_multi_agents(
     board: List[Card] = []
 
     print(f"Player: {', '.join(p.name for p in active_players)}  | pot: {pot}")
-    # ✅ 只展示人类底牌，AI 显示 ?? ??
     for p in active_players:
         if p.name == human_name:
             print(f"{p.name} holes: {fmt_cards(holes[p.name])}")
-        else:
-            print(f"{p.name} holes: ?? ??")
 
     # Preflop
-    pot, winner = betting_round_human_vs_multi_agents(
+    pot, winner = betting_round(
         active_players, pot, holes, board, "Preflop",
         human_name, agent_names, agent_complete
     )
@@ -605,7 +398,7 @@ def play_hand_human_vs_multi_agents(
     # Flop
     board += deck.pop_cards(3)
     print("Phase: Flop"); print("Borad: ", fmt_board(board))
-    pot, winner = betting_round_human_vs_multi_agents(
+    pot, winner = betting_round(
         active_players, pot, holes, board, "Flop",
         human_name, agent_names, agent_complete
     )
@@ -614,7 +407,7 @@ def play_hand_human_vs_multi_agents(
     # Turn
     board += deck.pop_cards(1)
     print("Phase: Turn"); print("Borad: ", fmt_board(board))
-    pot, winner = betting_round_human_vs_multi_agents(
+    pot, winner = betting_round(
         active_players, pot, holes, board, "Turn",
         human_name, agent_names, agent_complete
     )
@@ -623,13 +416,13 @@ def play_hand_human_vs_multi_agents(
     # River
     board += deck.pop_cards(1)
     print("Phase: River"); print("Borad: ", fmt_board(board))
-    pot, winner = betting_round_human_vs_multi_agents(
+    pot, winner = betting_round(
         active_players, pot, holes, board, "River",
         human_name, agent_names, agent_complete
     )
     if settle_early(winner, pot): return True
 
-    # —— showdown ——（不泄露 AI 底牌）
+    # Showdown
     print("—— showdown ——")
     for p in active_players:
         if p.name == human_name or reveal_bots_at_showdown:
