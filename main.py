@@ -3,7 +3,7 @@ from entities import Player
 from pipeline import ChatAnthropic
 
 
-def run_vs_real_claude():
+def one_hand():
     llm = ChatAnthropic(
         model="claude-3-5-sonnet-20241022",
         api_key="sk-91muMTPMVB6nol36k9jTzZGttnHpRqANPayqpFFa5ZomzjFI",
@@ -32,4 +32,4 @@ def run_vs_real_claude():
 
 
 if __name__ == "__main__":
-    run_vs_real_claude()
+    one_hand()
