@@ -2,23 +2,30 @@ import random
 from state import RANKS, SUITS
 from dataclasses import dataclass
 
+
 class Card:
     def __init__(self, rank: int, suit: int):
         if rank not in RANKS or suit not in SUITS:
             raise ValueError("Invalid card")
-        self._value = (rank<<2)+suit
+        self._value = (rank << 2) + suit
 
     @property
-    def rank(self): return self._value >> 2
+    def rank(self):
+        return self._value >> 2
 
     @property
-    def suit(self): return self._value & 3
+    def suit(self):
+        return self._value & 3
 
-    def __int__(self): return self._value    # int(card)
+    def __int__(self):
+        return self._value  # int(card)
 
-    def __lt__(self, other): return int(self) < int(other)  # card1 < card2
+    def __lt__(self, other):
+        return int(self) < int(other)  # card1 < card2
 
-    def __repr__(self): return f"{RANKS[self.rank]}{SUITS[self.suit]}"    # print(card)
+    def __repr__(self):
+        return f"{RANKS[self.rank]}{SUITS[self.suit]}"  # print(card)
+
 
 class Deck:
     def __init__(self, lowest_rank: int = 2):
@@ -34,12 +41,13 @@ class Deck:
                 self.cards, self.discard = self.discard, []
                 random.shuffile(self.cards)
             out.append(self.cards.pop())
-            n-=1
+            n -= 1
         return out
-    
+
     # fold card > 1
     def push_cards(self, disc):
         self.discard += disc
+
 
 class CardsHelper:
     def __init__(self, cards, lowest_rank=2):
@@ -77,19 +85,19 @@ class CardsHelper:
             if c.rank not in seen:
                 uniq.append(c)
                 seen.add(c.rank)
-        if not uniq:    # no cards
+        if not uniq:  # no cards
             return None
 
-        # Use a sliding window to find the longest segment in uniq with a difference of 1 
+        # Use a sliding window to find the longest segment in uniq with a difference of 1
         # between adjacent points return directly when the length reaches 5
         straight = [uniq[0]]
         for i in range(1, len(uniq)):
-            if uniq[i].rank == uniq[i - 1].rank - 1:    # cur rank equals pre rank minus 1
+            if uniq[i].rank == uniq[i - 1].rank - 1:  # cur rank equals pre rank minus 1
                 straight.append(uniq[i])
                 if len(straight) == 5:  # directly return when find straight
                     return straight
             else:
-                straight = [uniq[i]]    # rank interrupted inital straight list
+                straight = [uniq[i]]  # rank interrupted inital straight list
 
         # special consideration for {1,2,3,4,5}
         ranks = [c.rank for c in uniq]
@@ -100,9 +108,9 @@ class CardsHelper:
                 if c.rank in need:
                     seq.append(c)
                     need.remove(c.rank)
-                    if not need:    # find all
+                    if not need:  # find all
                         break
-            a = next((c for c in uniq if c.rank == 14), None)   # find 'A' 
+            a = next((c for c in uniq if c.rank == 14), None)  # find 'A'
             if a:
                 seq.append(a)
                 return seq
@@ -122,8 +130,10 @@ class CardsHelper:
     def straight_flush(self):
         suits = self._check_suits()
         for s_cards in suits.values():
-            if len(s_cards) >= 5:   # if one suit is more than 5 card
-                s_cards.sort(key=lambda c: c.rank, reverse=True)    # sort card in bucket for checking straight
+            if len(s_cards) >= 5:  # if one suit is more than 5 card
+                s_cards.sort(
+                    key=lambda c: c.rank, reverse=True
+                )  # sort card in bucket for checking straight
                 st = self._get_straight(s_cards)
                 if st:
                     return st
@@ -149,9 +159,9 @@ class CardsHelper:
         if trips and (len(trips) >= 2 or pairs):
             if len(trips) >= 2:
                 # big trip + 2 of small trip
-                return (self._merge(trips[0] + trips[1][:2])[:5])
+                return self._merge(trips[0] + trips[1][:2])[:5]
             # return full house
-            return (self._merge(trips[0] + pairs[0])[:5])
+            return self._merge(trips[0] + pairs[0])[:5]
         return None
 
     def straight(self):
@@ -172,21 +182,35 @@ class CardsHelper:
     def no_pair(self):
         return self._sorted[:5]
 
+
 class Score:
     # 0-8 rank the card category
-    NO_PAIR, PAIR, TWO_PAIR, TRIPS, STRAIGHT, FULL_HOUSE, FLUSH, QUADS, STRAIGHT_FLUSH = range(9)
-    def __init__(self, category, cards): 
+    (
+        NO_PAIR,
+        PAIR,
+        TWO_PAIR,
+        TRIPS,
+        STRAIGHT,
+        FULL_HOUSE,
+        FLUSH,
+        QUADS,
+        STRAIGHT_FLUSH,
+    ) = range(9)
+
+    def __init__(self, category, cards):
         self.category = category
         self.cards = cards
 
     @property
     def strength(self):
-        s = self.category   # category above
-        for i in range(5):  # after will be [category][rank1][rank2][rank3][rank4][rank5]
-            s <<= 4 # 2-14 need 2^4=16 t represent each card
-            s += self.cards[i].rank if i < len(self.cards) else 0   # fold before 5 card
-        return s    # do not consider suit, they do not provide weight
-    
+        s = self.category  # category above
+        for i in range(
+            5
+        ):  # after will be [category][rank1][rank2][rank3][rank4][rank5]
+            s <<= 4  # 2-14 need 2^4=16 t represent each card
+            s += self.cards[i].rank if i < len(self.cards) else 0  # fold before 5 card
+        return s  # do not consider suit, they do not provide weight
+
     def cmp(self, other):
         # compare categoty
         if self.category != other.category:
@@ -200,31 +224,36 @@ class Score:
         # same score
         return 0
 
+
 class PokerScoreDetector:
-    def __init__(self, lowest_rank=2): 
-        self._lowest_rank=lowest_rank
+    def __init__(self, lowest_rank=2):
+        self._lowest_rank = lowest_rank
 
     def get_score(self, cards) -> Score:
         ch = CardsHelper(cards, self._lowest_rank)
         # get score for hand based on category
-        for cat, fn in [(Score.STRAIGHT_FLUSH,ch.straight_flush),
-                        (Score.QUADS,ch.quads),
-                        (Score.FLUSH,ch.flush),
-                        (Score.FULL_HOUSE,ch.full_house),
-                        (Score.STRAIGHT,ch.straight),
-                        (Score.TRIPS,ch.trips),
-                        (Score.TWO_PAIR,ch.two_pair),
-                        (Score.PAIR,ch.pair),
-                        (Score.NO_PAIR,ch.no_pair)]:
+        for cat, fn in [
+            (Score.STRAIGHT_FLUSH, ch.straight_flush),
+            (Score.QUADS, ch.quads),
+            (Score.FLUSH, ch.flush),
+            (Score.FULL_HOUSE, ch.full_house),
+            (Score.STRAIGHT, ch.straight),
+            (Score.TRIPS, ch.trips),
+            (Score.TWO_PAIR, ch.two_pair),
+            (Score.PAIR, ch.pair),
+            (Score.NO_PAIR, ch.no_pair),
+        ]:
             res = fn()  # related function
-            if res: 
-                return Score(cat,res)   # category + hand score
+            if res:
+                return Score(cat, res)  # category + hand score
         raise RuntimeError("Poker Score Detector Error")
 
-@dataclass # decorator to add __init__, __repr__, __eq__
+
+@dataclass  # decorator to add __init__, __repr__, __eq__
 class Player:
     name: str
     money: int
+
 
 def fmt_cards(cs):
     f = lambda c: f"{RANKS[c.rank]}{SUITS[c.suit]}"
@@ -232,4 +261,6 @@ def fmt_cards(cs):
 
 
 def print_state(player, pot, street):
-    print(f"---{street}---\n Your chips: [{player.money}]\n Pot: [{pot}]\n-------------")
+    print(
+        f"---{street}---\n Your chips: [{player.money}]\n Pot: [{pot}]\n-------------"
+    )

@@ -1,16 +1,16 @@
-
 def get_single_player(
-        agent_name,
-        street,
-        pot,
-        board_txt,
-        others_txt,
-        to_call_for_me,
-        opened,
-        last_raise,
-        min_bet,
-        stacks,
-        hole_txt_me):
+    agent_name,
+    street,
+    pot,
+    board_txt,
+    others_txt,
+    to_call_for_me,
+    opened,
+    last_raise,
+    min_bet,
+    stacks,
+    hole_txt_me,
+):
     return f"""You are a poker decision agent for player: {agent_name}.
 Game: No-Limit Texas Hold'em (multiway). Opponents' hole cards are unknown and must be treated as ??.
 

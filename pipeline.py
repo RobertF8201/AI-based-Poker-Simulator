@@ -3,6 +3,7 @@ import requests
 from state import JSON_RE
 from typing import Dict, Tuple, Optional
 
+
 class ChatAnthropic:
     def __init__(
         self,
@@ -44,6 +45,7 @@ class ChatAnthropic:
             print(f"API invoke failure {e}")
             return '{"action":"check","amount":0}'
 
+
 def parse_agent_action(raw: str) -> Dict:
     if not raw:
         return {"action": "check", "amount": 0}
@@ -65,6 +67,7 @@ def parse_agent_action(raw: str) -> Dict:
         amount = 0
     return {"action": action, "amount": amount}
 
+
 def normalize_action_ctx(
     action: str,
     amount: int,
@@ -73,12 +76,12 @@ def normalize_action_ctx(
     opened: bool,
     last_raise: int,
     min_bet: int,
-    stack: int
+    stack: int,
 ) -> Tuple[str, int, Optional[str]]:
     a = (action or "").lower()
     reason = None
 
-    legal = {"check","bet","call","raise","fold","allin","all-in","all in"}
+    legal = {"check", "bet", "call", "raise", "fold", "allin", "all-in", "all in"}
     if a not in legal:
         if to_call == 0 and not opened:
             return "check", 0, "illegal->check"
@@ -87,7 +90,7 @@ def normalize_action_ctx(
                 return "call", 0, "illegal->call"
             return "fold", 0, "illegal->fold"
 
-    if a in ("allin","all-in","all in"):
+    if a in ("allin", "all-in", "all in"):
         return "all-in", stack, None
 
     if to_call == 0 and not opened:
@@ -127,4 +130,3 @@ def normalize_action_ctx(
     if stack >= to_call and to_call > 0:
         return "call", 0, "fallback->call"
     return "check", 0, "fallback->check"
-

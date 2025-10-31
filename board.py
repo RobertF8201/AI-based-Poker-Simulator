@@ -4,19 +4,22 @@ from state import MIN_BET, CAT_NAMES_HOLDEM
 from agent import agent_policy
 from entities import Card, Deck, Score, Player, PokerScoreDetector, fmt_cards
 
-def fmt_board(board: List['Card']) -> str:
+
+def fmt_board(board: List["Card"]) -> str:
     return fmt_cards(board) if board else "(null)"
+
 
 def ask_int(prompt):
     s = input(prompt).strip()
-    if s == "": 
+    if s == "":
         return None
-    if s.isdigit(): 
+    if s.isdigit():
         return int(s)
-    try: 
+    try:
         return int(s)
-    except: 
+    except:
         return None
+
 
 def ask_bet_amount(max_amt, min_amt):
     while True:
@@ -32,9 +35,12 @@ def ask_bet_amount(max_amt, min_amt):
             continue
         return v
 
+
 def ask_raise_size(max_amt, min_raise):
     while True:
-        v = ask_int(f"Enter your raise size (excluding the call amount), minimum {min_raise}, maximum {max_amt}: ")
+        v = ask_int(
+            f"Enter your raise size (excluding the call amount), minimum {min_raise}, maximum {max_amt}: "
+        )
         if v is None:
             print("Please enter an integer amount.")
             continue
@@ -46,16 +52,19 @@ def ask_raise_size(max_amt, min_raise):
             continue
         return v
 
-def showdown(detector, 
-             active_players: List['Player'], 
-             holes: Dict[str, List['Card']], 
-             board: List['Card']) -> Tuple[List['Player'], Dict[str, 'Score']]:
+
+def showdown(
+    detector,
+    active_players: List["Player"],
+    holes: Dict[str, List["Card"]],
+    board: List["Card"],
+) -> Tuple[List["Player"], Dict[str, "Score"]]:
 
     if not active_players:
         return [], {}
 
     # calculate active player's holes + board
-    scores: Dict[str, 'Score'] = {}
+    scores: Dict[str, "Score"] = {}
     for p in active_players:
         hole = holes.get(p.name, [])
         scores[p.name] = detector.get_score(hole + board)
@@ -67,18 +76,21 @@ def showdown(detector,
             best_player = p
 
     # share the pot
-    winners = [p for p in active_players if scores[p.name].cmp(scores[best_player.name]) == 0]
+    winners = [
+        p for p in active_players if scores[p.name].cmp(scores[best_player.name]) == 0
+    ]
     return winners, scores
 
+
 def betting_round(
-    active_players: List['Player'],
+    active_players: List["Player"],
     pot: int,
-    holes: Dict[str, List['Card']],
-    board: List['Card'],
+    holes: Dict[str, List["Card"]],
+    board: List["Card"],
     street: str,
     human_name: str,
     agent_names: List[str],
-    agent_complete
+    agent_complete,
 ):
     contrib = {p.name: 0 for p in active_players}
     opened = False
@@ -122,8 +134,12 @@ def betting_round(
             hole_view = fmt_cards(holes[name])
             print(f"{name} turn, hold[{hole_view}]. To call: {to_call}. Stack: {stack}")
 
-        if sum(1 for p in active_players if p.money > 0) < 2 and to_call == 0 and not opened:
-            print('-----------------------------------------------------------')
+        if (
+            sum(1 for p in active_players if p.money > 0) < 2
+            and to_call == 0
+            and not opened
+        ):
+            print("-----------------------------------------------------------")
             return pot, None
 
         if name == human_name:
@@ -131,7 +147,11 @@ def betting_round(
                 action = input("[check/bet/all-in]: ").strip().lower()
                 desired_amt = 0
             else:
-                action = input(f"[fold/call/raise/all-in] (must call {to_call} to stay): ").strip().lower()
+                action = (
+                    input(f"[fold/call/raise/all-in] (must call {to_call} to stay): ")
+                    .strip()
+                    .lower()
+                )
                 desired_amt = 0
         else:
             stacks_now = stacks_snapshot()
@@ -164,7 +184,11 @@ def betting_round(
                 continue
 
             elif action == "bet":
-                amt = desired_amt if name in agent_names else ask_bet_amount(max_amt=stack, min_amt=MIN_BET)
+                amt = (
+                    desired_amt
+                    if name in agent_names
+                    else ask_bet_amount(max_amt=stack, min_amt=MIN_BET)
+                )
                 if amt < MIN_BET or amt > stack:
                     if name == human_name:
                         print("Invalid bet size.")
@@ -249,7 +273,11 @@ def betting_round(
 
             elif action == "raise":
                 max_raise_cap = max(0, stack - to_call)
-                raise_amt = desired_amt - to_call if name in agent_names else ask_raise_size(max_amt=stack - to_call, min_raise=last_raise)
+                raise_amt = (
+                    desired_amt - to_call
+                    if name in agent_names
+                    else ask_raise_size(max_amt=stack - to_call, min_raise=last_raise)
+                )
                 if raise_amt < last_raise or raise_amt > max_raise_cap:
                     if stack >= to_call and to_call > 0:
                         pay = to_call
@@ -345,16 +373,17 @@ def betting_round(
                         actor = 0
                 continue
 
-    print('-----------------------------------------------------------')
+    print("-----------------------------------------------------------")
     return pot, None
+
 
 def play_hand(
     human_name: str,
     agent_names: List[str],
-    players: List['Player'],
-    agent_complete,   # Callable[[str], str]
+    players: List["Player"],
+    agent_complete,  # Callable[[str], str]
     lowest_rank: int = 2,
-    reveal_bots_at_showdown: bool = False, 
+    reveal_bots_at_showdown: bool = False,
 ) -> bool:
 
     def settle_early(winner, pot) -> bool:
@@ -390,37 +419,68 @@ def play_hand(
 
     # Preflop
     pot, winner = betting_round(
-        active_players, pot, holes, board, "Preflop",
-        human_name, agent_names, agent_complete
+        active_players,
+        pot,
+        holes,
+        board,
+        "Preflop",
+        human_name,
+        agent_names,
+        agent_complete,
     )
-    if settle_early(winner, pot): return True
+    if settle_early(winner, pot):
+        return True
 
     # Flop
     board += deck.pop_cards(3)
-    print("Phase: Flop"); print("Borad: ", fmt_board(board))
+    print("Phase: Flop")
+    print("Borad: ", fmt_board(board))
     pot, winner = betting_round(
-        active_players, pot, holes, board, "Flop",
-        human_name, agent_names, agent_complete
+        active_players,
+        pot,
+        holes,
+        board,
+        "Flop",
+        human_name,
+        agent_names,
+        agent_complete,
     )
-    if settle_early(winner, pot): return True
+    if settle_early(winner, pot):
+        return True
 
     # Turn
     board += deck.pop_cards(1)
-    print("Phase: Turn"); print("Borad: ", fmt_board(board))
+    print("Phase: Turn")
+    print("Borad: ", fmt_board(board))
     pot, winner = betting_round(
-        active_players, pot, holes, board, "Turn",
-        human_name, agent_names, agent_complete
+        active_players,
+        pot,
+        holes,
+        board,
+        "Turn",
+        human_name,
+        agent_names,
+        agent_complete,
     )
-    if settle_early(winner, pot): return True
+    if settle_early(winner, pot):
+        return True
 
     # River
     board += deck.pop_cards(1)
-    print("Phase: River"); print("Borad: ", fmt_board(board))
+    print("Phase: River")
+    print("Borad: ", fmt_board(board))
     pot, winner = betting_round(
-        active_players, pot, holes, board, "River",
-        human_name, agent_names, agent_complete
+        active_players,
+        pot,
+        holes,
+        board,
+        "River",
+        human_name,
+        agent_names,
+        agent_complete,
     )
-    if settle_early(winner, pot): return True
+    if settle_early(winner, pot):
+        return True
 
     # Showdown
     print("—— showdown ——")
@@ -444,7 +504,14 @@ def play_hand(
         split = pot // len(winners)
         remainder = pot - split * len(winners)
         names = ", ".join(p.name for p in winners)
-        print(f"Share pot: {names} get {split}" + (f", reminder {remainder} to first {winners[0].name}" if remainder else ""))
+        print(
+            f"Share pot: {names} get {split}"
+            + (
+                f", reminder {remainder} to first {winners[0].name}"
+                if remainder
+                else ""
+            )
+        )
         for i, w in enumerate(winners):
             w.money += split + (remainder if i == 0 else 0)
 

@@ -1,11 +1,12 @@
+from board import play_hand
 from entities import Player
 from pipeline import ChatAnthropic
-from board import play_hand
+
 
 def run_vs_real_claude():
     llm = ChatAnthropic(
         model="claude-3-5-sonnet-20241022",
-        api_key="sk-91muMTPMVB6nol36k9jTzZGttnHpRqANPayqpFFa5ZomzjFI", 
+        api_key="sk-91muMTPMVB6nol36k9jTzZGttnHpRqANPayqpFFa5ZomzjFI",
         base_url="https://yinli.one",
         temperature=0,
     )
@@ -28,6 +29,7 @@ def run_vs_real_claude():
     print("\n=== Final stacks ===")
     for p in players:
         print(f"{p.name}: {p.money}")
+
 
 if __name__ == "__main__":
     run_vs_real_claude()
