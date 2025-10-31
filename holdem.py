@@ -618,6 +618,9 @@ def betting_round(active_players, pot, holes):
     while len(active_players) > 1:
         if not pending:
             break
+        
+        if actor >= len(active_players):
+            actor = 0
 
         player = active_players[actor]
         name = player.name
@@ -643,7 +646,7 @@ def betting_round(active_players, pot, holes):
                 continue
             elif action == "bet":
                 amt = ask_bet_amount(max_amt=stack, min_amt=MIN_BET)
-                if amt <= MIN_BET or amt > stack:
+                if amt < MIN_BET or amt > stack:
                     print("Invalid bet size.")
                     continue
                 player.money -= amt   
@@ -665,7 +668,7 @@ def betting_round(active_players, pot, holes):
                 contrib[name] += amt
                 pot += amt
                 opened = True
-                last_raise = amt 
+                last_raise = max(last_raise, amt) 
                 reset_pending_after_raise(name)
                 actor = (actor + 1) % len(active_players)
                 continue
@@ -681,8 +684,9 @@ def betting_round(active_players, pot, holes):
                 active_players.remove(player)
                 if len(active_players) == 1:
                     winner = active_players[0]
-                    print(f"{winner.name} wins the pot!")
                     return pot, winner
+                if actor >= len(active_players):
+                    actor = 0
                 continue
             elif action == "call":
                 pay = min(to_call, stack)
@@ -792,6 +796,7 @@ def play_hand_multi(active_players: List['Player'], lowest_rank: int = 2) -> boo
             print(f"{winner.name} win the pot {pot}.")
             winner.money += pot
             return True
+        return False
         
     # player with no money
     active_players = [p for p in active_players if p.money > 0]
@@ -823,30 +828,31 @@ def play_hand_multi(active_players: List['Player'], lowest_rank: int = 2) -> boo
 
     # Preflop
     pot, winner = betting_round(active_players, pot, holes)
-    win(winner, pot)
-
+    if win(winner, pot):
+            return True
     # Flop
     board += deck.pop_cards(3)
     print("Phase: Flop")
     print("Borad: ", fmt_board(board))
     pot, winner = betting_round(active_players, pot, holes)
-    win(winner, pot)
-
+    if win(winner, pot):
+            return True
     # Turn
     board += deck.pop_cards(1)
     print("Phase: Turn")
     print("Borad: ", fmt_board(board))
     pot, winner = betting_round(active_players, pot, holes)
-    win(winner, pot)
-
+    if win(winner, pot):
+            return True
 
     # River
     board += deck.pop_cards(1)
     print("Phase: River")
     print("Borad: ", fmt_board(board))
     pot, winner = betting_round(active_players, pot, holes)
-    win(winner, pot)
-
+    if win(winner, pot):
+            return True
+    
     # —— showdown ——
     print("—— showdown ——")
     for p in active_players:
