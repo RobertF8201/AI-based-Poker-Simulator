@@ -1,5 +1,5 @@
-# ui_cli.py
-from typing import Optional
+import re
+from typing import Optional, List, Dict, Tuple
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -91,3 +91,140 @@ def human_turn_header(player_name: str, hole_view: str, to_call: int, stack: int
         f"Your cards: [green]{hole_view}[/]",
         style="bold white on rgb(30,30,30)",
     ))
+
+_SECTION_RE = re.compile(r"^\s*(\d+)\.\s*\*\*(.+?)\*\*\s*$")
+
+def _split_sections(md: str) -> Dict[str, List[str]]:
+    sections: Dict[str, List[str]] = {}
+    current_title = None
+    for line in md.splitlines():
+        m = _SECTION_RE.match(line)
+        if m:
+            current_title = m.group(2).strip()
+            sections[current_title] = []
+        else:
+            if current_title is None:
+                current_title = "_Preamble_"
+                sections[current_title] = []
+            sections[current_title].append(line)
+    return sections
+
+def _parse_overview(lines: List[str]) -> Table:
+    kv = {}
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        if ":" in ln:
+            key, _, val = ln.partition(":")
+            kv[key.strip()] = val.strip()
+    tb = Table(title="Overview", box=box.SIMPLE_HEAVY)
+    tb.add_column("Field", style="bold", justify="right")
+    tb.add_column("Value", justify="left")
+    for k in ("Hand ID", "Overall Score", "Summary"):
+        if k in kv:
+            tb.add_row(k, kv[k])
+    for k, v in kv.items():
+        if k not in ("Hand ID","Overall Score","Summary"):
+            tb.add_row(k, v)
+    return tb
+
+def _extract_markdown_table(lines: List[str]) -> Tuple[List[str], List[List[str]]]:
+    pipe_blocks: List[List[str]] = []
+    cur: List[str] = []
+    for ln in lines:
+        if ln.strip().startswith("|") and ln.strip().endswith("|"):
+            cur.append(ln.strip())
+        else:
+            if cur:
+                pipe_blocks.append(cur)
+                cur = []
+    if cur:
+        pipe_blocks.append(cur)
+    if not pipe_blocks:
+        return [], []
+
+    block = pipe_blocks[0]
+    if len(block) < 2:
+        return [], []
+    header = [c.strip() for c in block[0].strip("|").split("|")]
+    rows = []
+    for ln in block[2:]:
+        cells = [c.strip() for c in ln.strip("|").split("|")]
+        if len(cells) < len(header):
+            cells += [""] * (len(header) - len(cells))
+        rows.append(cells[:len(header)])
+    return header, rows
+
+def _md_bullets_to_text(lines: List[str]) -> str:
+    buf = []
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("- "):
+            buf.append("• " + s[2:])
+        elif s.startswith("* "):
+            buf.append("• " + s[2:])
+        else:
+            buf.append(s)
+    return "\n".join(buf).strip()
+
+def render_ai_review_report(analysis: str):
+    if not analysis or analysis.strip() == "[Empty response]":
+        info_line("\n=== AI Review Report ===\n", "bold")
+        info_line("[Empty response]", "red")
+        return
+
+    info_line("\n=== AI Review Report ===\n", "bold")
+
+    sections = _split_sections(analysis)
+
+    if "Overview" in sections:
+        tb = _parse_overview(sections["Overview"])
+        console.print(Panel(tb, style="bold cyan"))
+    else:
+        pre = sections.get("_Preamble_", [])
+        if pre:
+            console.print(Panel(_md_bullets_to_text(pre), title="Summary", style="bold cyan"))
+
+    if "Quantitative Table" in sections:
+        headers, rows = _extract_markdown_table(sections["Quantitative Table"])
+        if headers:
+            t = Table(title="Quantitative Table", box=box.SIMPLE_HEAVY)
+            for h in headers:
+                t.add_column(h, overflow="fold")
+            for r in rows:
+                t.add_row(*r)
+            console.print(Panel(t, style="bold magenta"))
+        else:
+            console.print(Panel(_md_bullets_to_text(sections["Quantitative Table"]), title="Quantitative Table", style="bold magenta"))
+
+    for title in ("Street-by-Street Analysis", "Equity & Probabilities", "Strategic Recommendations", "Notes / Assumptions"):
+        if title in sections:
+            txt = _md_bullets_to_text(sections[title])
+            console.print(Panel(txt, title=title, style="green"))
+
+    hr()
+
+def ask_num_players(min_players: int = 2, max_players: int = 9, default: int = 4) -> int:
+    info_line(f"How many players in total? (min {min_players}, max {max_players})", "dim")
+    while True:
+        n = IntPrompt.ask("Players", default=default, show_default=True)
+        if n < min_players:
+            info_line(f"Players cannot be fewer than {min_players}.", "red")
+            continue
+        if n > max_players:
+            info_line(f"Players cannot exceed {max_players}.", "red")
+            continue
+        return n
+
+def ask_starting_stack(default_stack: int = 100, min_stack: int = 1, max_stack: int = 100000) -> int:
+    info_line(f"Starting stack for each player? (default {default_stack})", "dim")
+    while True:
+        v = IntPrompt.ask("Starting Stack", default=default_stack, show_default=True)
+        if v < min_stack:
+            info_line(f"Stack must be ≥ {min_stack}.", "red")
+            continue
+        if v > max_stack:
+            info_line(f"Stack must be ≤ {max_stack}.", "red")
+            continue
+        return v

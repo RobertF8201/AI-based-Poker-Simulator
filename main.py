@@ -8,7 +8,8 @@ from pipeline import ChatAnthropic
 from ui_cli import (
     banner_hand, show_seats, stacks_pot_table,
     info_line, hr, seats_positions_line,
-    ask_report, ask_continue
+    ask_report, ask_continue, render_ai_review_report,
+    ask_num_players, ask_starting_stack, 
 )
 
 CLAUDE_API_KEY = "sk-91muMTPMVB6nol36k9jTzZGttnHpRqANPayqpFFa5ZomzjFI"
@@ -24,12 +25,12 @@ def pretty_positions_line(players_order):
     return seats_positions_line(players_order)
 
 def game_loop():
-    base_players = [
-        Player("You", 100),
-        Player("Bot1", 100),
-        Player("Bot2", 100),
-        Player("Bot3", 100),
-    ]
+    total_players = ask_num_players(min_players=2, max_players=9, default=4)
+    starting_stack = ask_starting_stack(default_stack=100)
+
+    base_players = [Player("You", starting_stack)]
+    for i in range(1, total_players):
+        base_players.append(Player(f"Bot{i}", starting_stack))
 
     dq = deque(base_players)
     hand_no = 1
@@ -40,9 +41,11 @@ def game_loop():
         players_order = list(dq)
         show_seats(players_order)
 
+        dynamic_agent_names = [p.name for p in players_order if p.name != "You"]
+
         play_hand(
             human_name="You",
-            agent_names=["Bot1", "Bot2", "Bot3"],
+            agent_names=dynamic_agent_names,
             players=players_order,
             agent_complete=llm.complete,
             lowest_rank=2,
@@ -55,8 +58,8 @@ def game_loop():
         if ask_report():
             info_line("\n=== Sending last hand record for analysis... ===\n", "dim")
             analysis = expert_agent(agent_complete=llm.complete, stream=False, max_tokens=1800)
-            info_line("\n=== AI Review Report ===\n", "bold")
-            print(analysis if analysis else "[Empty response]")
+            render_ai_review_report(analysis if analysis else "[Empty response]")
+
 
         if not ask_continue():
             info_line("Bye! 👋", "green")
