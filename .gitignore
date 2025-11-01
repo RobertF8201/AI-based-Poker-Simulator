@@ -38,10 +38,8 @@ pip-wheel-metadata/
 build/
 dist/
 
-# --- Jupyter Notebook 缓存（如有使用）---
 .ipynb_checkpoints
 
-# --- 覆盖率报告（pytest/coverage）---
 htmlcov/
 .tox/
 .nox/
@@ -50,12 +48,10 @@ htmlcov/
 .cache
 .pytest_cache/
 
-# --- Python 类型检查工具缓存 ---
 .mypy_cache/
 .pyre/
 .pytype/
 
-# --- 本地配置（例如敏感密钥、调试用配置）---
 config.json
 local_settings.py
 .env

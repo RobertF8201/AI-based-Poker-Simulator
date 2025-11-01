@@ -3,23 +3,6 @@ import requests
 from state import JSON_RE
 from typing import Dict, Tuple, Optional
 
-
-class ChatAnthropic:
-    def __init__(
-        self,
-        model="claude-3-5-sonnet-20241022",
-        api_key="sk-91muMTPMVB6nol36k9jTzZGttnHpRqANPayqpFFa5ZomzjFI",
-        base_url="https://yinli.one",
-        temperature=0,
-    ):
-        self.model = model
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.temperature = temperature
-
-    import requests
-from typing import Optional
-
 class ChatAnthropic:
     def __init__(self, model: str, api_key: str, base_url: str, temperature: float = 0):
         self.model = model
@@ -36,10 +19,6 @@ class ChatAnthropic:
         stream: bool = False,
         timeout: int = 120,
     ) -> str:
-        """
-        Call Anthropic Messages API and return the FULL text (not just first line).
-        Accepts optional max_tokens/temperature/stream/timeout to match caller.
-        """
         url = f"{self.base_url}/v1/messages"
         headers = {
             "content-type": "application/json",
