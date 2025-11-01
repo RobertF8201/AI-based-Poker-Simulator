@@ -1,7 +1,7 @@
 from typing import Dict, List, Tuple, Optional
 
 from logger import HandLogger
-from agent import player_agent, expert_agent
+from agent import player_agent
 from state import MIN_BET, CAT_NAMES_HOLDEM
 from entities import Card, Deck, Score, Player, PokerScoreDetector, fmt_cards
 
@@ -82,25 +82,27 @@ def showdown(
     ]
     return winners, scores
 
-
 def betting_round(
-    active_players: List["Player"],
-    pot: int,
-    holes: Dict[str, List["Card"]],
-    board: List["Card"],
-    street: str,
-    human_name: str,
-    agent_names: List[str],
+    active_players, 
+    pot, 
+    holes, 
+    board, 
+    street,
+    human_name, 
+    agent_names, 
     agent_complete,
-    logger: Optional[HandLogger] = None
+    logger: Optional[HandLogger] = None,
+    initial_contrib: Optional[Dict[str,int]] = None,
+    start_actor: int = 0,
+    opened0: bool = False,
+    last_raise0: int = MIN_BET
 ):
-    contrib = {p.name: 0 for p in active_players}
-    opened = False
-    last_raise = MIN_BET
-    actor = 0
+    contrib = initial_contrib if initial_contrib is not None else {p.name: 0 for p in active_players}
+    opened = opened0
+    last_raise = last_raise0
+    actor = start_actor
     pending = set(p.name for p in active_players)
     name_order = [p.name for p in active_players]
-
     MAX_ITER = 600
     loops = 0
 
@@ -127,10 +129,15 @@ def betting_round(
 
         player = active_players[actor]
         name = player.name
-
         max_in_round = max(contrib[nm] for nm in name_order) if active_players else 0
         to_call = max_in_round - contrib[name]
         stack = player.money
+
+        amt = 0
+        pay = 0
+        raise_amt = 0
+        to_call_before = to_call
+        stack_before = stack
 
         if name == human_name:
             hole_view = fmt_cards(holes[name])
@@ -147,7 +154,10 @@ def betting_round(
 
         if name == human_name:
             if to_call == 0:
-                action = input("[check/bet/all-in]: ").strip().lower()
+                if not opened:
+                    action = input("[check/bet/all-in]: ").strip().lower()
+                else:
+                    action = input("[check/raise/all-in]: ").strip().lower()
                 desired_amt = 0
             else:
                 action = (
@@ -175,24 +185,22 @@ def betting_round(
             action = decision["action"]
             desired_amt = int(decision.get("amount", 0))
 
+        if to_call == 0 and opened and action == "bet":
+            action = "raise"
+
         if to_call == 0 and not opened:
             if action == "check":
                 if logger:
                     logger.log_action(street, name, "check",
-                        to_call_before=0, stack_before=stack,
+                        to_call_before=to_call_before, stack_before=stack_before,
                         amount=0, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
-                    
-                if name == human_name:
-                    print(f"{name} checks.")
-                else:
-                    print(f"{name} checks.")
-                    print_stacks_and_pot()
+                print(f"{name} checks.")
+                if name != human_name: print_stacks_and_pot()
                 pending.discard(name)
                 actor = (actor + 1) % len(active_players)
                 continue
-
             elif action == "bet":
                 amt = (
                     desired_amt
@@ -200,19 +208,18 @@ def betting_round(
                     else ask_bet_amount(max_amt=stack, min_amt=MIN_BET)
                 )
                 if amt < MIN_BET or amt > stack:
-                    if name == human_name:
-                        print("Invalid bet size.")
-                    else:
-                        print(f"{name} Invalid bet size. (auto fallback to check)")
-                        print_stacks_and_pot()
-
                     if logger:
                         logger.log_action(street, name, "check",
-                            to_call_before=0, stack_before=stack,
+                            to_call_before=to_call_before, stack_before=stack_before,
                             amount=0, stack_after=player.money,
                             pot_after=pot, contrib_after=contrib[name],
                             last_raise=last_raise, opened=opened)
-                        
+                    if name == human_name:
+                        print("Invalid bet size.")
+                        print(f"{name} checks.")
+                    else:
+                        print(f"{name} Invalid bet size. (auto fallback to check)")
+                    if name != human_name: print_stacks_and_pot()
                     pending.discard(name)
                     actor = (actor + 1) % len(active_players)
                     continue
@@ -222,35 +229,29 @@ def betting_round(
                 opened = True
                 last_raise = amt
                 reset_pending_after_raise(name)
-
                 if logger:
-                    logger.log_action(street, name, "check",
-                        to_call_before=0, stack_before=stack,
-                        amount=0, stack_after=player.money,
+                    logger.log_action(street, name, "bet",
+                        to_call_before=to_call_before, stack_before=stack_before,
+                        amount=amt, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
-                    
                 print(f"{name} bets {amt}.")
-                if name != human_name:
-                    print_stacks_and_pot()
+                if name != human_name: print_stacks_and_pot()
                 actor = (actor + 1) % len(active_players)
                 continue
-
             elif action in ("all-in", "allin", "all in"):
                 if stack <= 0:
-                    if name == human_name:
-                        print("You have no chips.")
-                    else:
-                        print(f"{name} has no chips.")
-                        print_stacks_and_pot()
-
                     if logger:
                         logger.log_action(street, name, "check",
-                            to_call_before=0, stack_before=stack,
+                            to_call_before=to_call_before, stack_before=stack_before,
                             amount=0, stack_after=player.money,
                             pot_after=pot, contrib_after=contrib[name],
                             last_raise=last_raise, opened=opened)
-                    
+                    if name == human_name:
+                        print("You have no chips. (fallback to check)")
+                    else:
+                        print(f"{name} has no chips. (fallback to check)")
+                    if name != human_name: print_stacks_and_pot()
                     pending.discard(name)
                     actor = (actor + 1) % len(active_players)
                     continue
@@ -261,49 +262,53 @@ def betting_round(
                 opened = True
                 last_raise = max(last_raise, amt)
                 reset_pending_after_raise(name)
-
                 if logger:
                     logger.log_action(street, name, "all-in",
-                        to_call_before=0, stack_before=stack,
+                        to_call_before=to_call_before, stack_before=stack_before,
                         amount=amt, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
-
                 print(f"{name} all-in for {amt}.")
-                if name != human_name:
-                    print_stacks_and_pot()
+                if name != human_name: print_stacks_and_pot()
                 actor = (actor + 1) % len(active_players)
                 continue
-
             else:
                 if logger:
-                    logger.log_action(street, name, "all-in",
-                        to_call_before=0, stack_before=stack,
-                        amount=amt, stack_after=player.money,
+                    logger.log_action(street, name, "check",
+                        to_call_before=to_call_before, stack_before=stack_before,
+                        amount=0, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
-                    
                 if name == human_name:
-                    print("Invalid input.")
+                    print("Invalid input. (auto fallback to check)")
                 else:
                     print(f"{name} Invalid input. (auto fallback to check)")
-                    print_stacks_and_pot()
+                if name != human_name: print_stacks_and_pot()
                 pending.discard(name)
                 actor = (actor + 1) % len(active_players)
                 continue
-
         else:
-            if action == "fold":
+            if action == "check" and to_call == 0:
                 if logger:
-                    logger.log_action(street, name, "all-in",
-                        to_call_before=0, stack_before=stack,
-                        amount=amt, stack_after=player.money,
+                    logger.log_action(street, name, "check",
+                        to_call_before=to_call_before, stack_before=stack_before,
+                        amount=0, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
-                    
+                print(f"{name} checks.")
+                if name != human_name: print_stacks_and_pot()
+                pending.discard(name)
+                actor = (actor + 1) % len(active_players)
+                continue
+            if action == "fold":
+                if logger:
+                    logger.log_action(street, name, "fold",
+                        to_call_before=to_call_before, stack_before=stack_before,
+                        amount=0, stack_after=player.money,
+                        pot_after=pot, contrib_after=contrib[name],
+                        last_raise=last_raise, opened=opened)
                 print(f"{name} folds.")
-                if name != human_name:
-                    print_stacks_and_pot()
+                if name != human_name: print_stacks_and_pot()
                 pending.discard(name)
                 del contrib[name]
                 active_players.remove(player)
@@ -314,7 +319,6 @@ def betting_round(
                 if actor >= len(active_players):
                     actor = 0
                 continue
-
             elif action == "call":
                 pay = min(to_call, stack)
                 player.money -= pay
@@ -322,17 +326,15 @@ def betting_round(
                 pot += pay
                 if logger:
                     logger.log_action(street, name, "call",
-                        to_call_before=to_call, stack_before=stack,
+                        to_call_before=to_call_before, stack_before=stack_before,
                         amount=pay, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
                 print(f"{name} calls {pay}.")
-                if name != human_name:
-                    print_stacks_and_pot()
+                if name != human_name: print_stacks_and_pot()
                 pending.discard(name)
                 actor = (actor + 1) % len(active_players)
                 continue
-
             elif action == "raise":
                 max_raise_cap = max(0, stack - to_call)
                 raise_amt = (
@@ -348,27 +350,24 @@ def betting_round(
                         pot += pay
                         if logger:
                             logger.log_action(street, name, "call",
-                                to_call_before=to_call, stack_before=stack,
+                                to_call_before=to_call_before, stack_before=stack_before,
                                 amount=pay, stack_after=player.money,
                                 pot_after=pot, contrib_after=contrib[name],
                                 last_raise=last_raise, opened=opened)
                         print(f"{name} invalid raise -> fallback to call {pay}.")
-                        if name != human_name:
-                            print_stacks_and_pot()
+                        if name != human_name: print_stacks_and_pot()
                         pending.discard(name)
                         actor = (actor + 1) % len(active_players)
                         continue
                     else:
                         if logger:
                             logger.log_action(street, name, "invalid-raise->fold",
-                                to_call_before=to_call, stack_before=stack,
+                                to_call_before=to_call_before, stack_before=stack_before,
                                 amount=0, stack_after=player.money,
                                 pot_after=pot, contrib_after=contrib[name],
                                 last_raise=last_raise, opened=opened)
-                            
                         print(f"{name} invalid raise -> fallback to fold.")
-                        if name != human_name:
-                            print_stacks_and_pot()
+                        if name != human_name: print_stacks_and_pot()
                         pending.discard(name)
                         del contrib[name]
                         active_players.remove(player)
@@ -379,7 +378,6 @@ def betting_round(
                         if actor >= len(active_players):
                             actor = 0
                         continue
-
                 pay = to_call + raise_amt
                 player.money -= pay
                 contrib[name] += pay
@@ -389,29 +387,27 @@ def betting_round(
                 reset_pending_after_raise(name)
                 if logger:
                     logger.log_action(street, name, "raise",
-                        to_call_before=to_call, stack_before=stack,
+                        to_call_before=to_call_before, stack_before=stack_before,
                         amount=pay, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
                 print(f"{name} raises to {contrib[name]}.")
-                if name != human_name:
-                    print_stacks_and_pot()
+                if name != human_name: print_stacks_and_pot()
                 actor = (actor + 1) % len(active_players)
                 continue
-
             elif action in ("all-in", "allin", "all in"):
                 if stack <= 0:
                     if logger:
-                        logger.log_action(street, name, "raise",
-                            to_call_before=to_call, stack_before=stack,
-                            amount=pay, stack_after=player.money,
+                        logger.log_action(street, name, "invalid-all-in",
+                            to_call_before=to_call_before, stack_before=stack_before,
+                            amount=0, stack_after=player.money,
                             pot_after=pot, contrib_after=contrib[name],
                             last_raise=last_raise, opened=opened)
                     if name == human_name:
                         print("You have no chips.")
                     else:
                         print(f"{name} has no chips.")
-                        print_stacks_and_pot()
+                    if name != human_name: print_stacks_and_pot()
                     pending.discard(name)
                     actor = (actor + 1) % len(active_players)
                     continue
@@ -421,8 +417,8 @@ def betting_round(
                 contrib[name] += pay
                 pot += pay
                 if logger:
-                    logger.log_action(street, name, "raise",
-                        to_call_before=to_call, stack_before=stack,
+                    logger.log_action(street, name, "all-in",
+                        to_call_before=to_call_before, stack_before=stack_before,
                         amount=pay, stack_after=player.money,
                         pot_after=pot, contrib_after=contrib[name],
                         last_raise=last_raise, opened=opened)
@@ -433,20 +429,32 @@ def betting_round(
                     reset_pending_after_raise(name)
                 else:
                     pending.discard(name)
-                if name != human_name:
-                    print_stacks_and_pot()
+                if name != human_name: print_stacks_and_pot()
                 actor = (actor + 1) % len(active_players)
                 continue
-
             else:
-                if stack >= to_call and to_call > 0:
+                if to_call == 0:
+                    if logger:
+                        logger.log_action(street, name, "check",
+                            to_call_before=to_call_before, stack_before=stack_before,
+                            amount=0, stack_after=player.money,
+                            pot_after=pot, contrib_after=contrib[name],
+                            last_raise=last_raise, opened=opened)
+                    if name == human_name:
+                        print("Invalid input. (auto fallback to check).")
+                    else:
+                        print(f"{name} Invalid input. (auto fallback to check).")
+                    if name != human_name: print_stacks_and_pot()
+                    pending.discard(name)
+                    actor = (actor + 1) % len(active_players)
+                elif stack >= to_call:
                     pay = to_call
                     player.money -= pay
                     contrib[name] += pay
                     pot += pay
                     if logger:
-                        logger.log_action(street, name, "raise",
-                            to_call_before=to_call, stack_before=stack,
+                        logger.log_action(street, name, "call",
+                            to_call_before=to_call_before, stack_before=stack_before,
                             amount=pay, stack_after=player.money,
                             pot_after=pot, contrib_after=contrib[name],
                             last_raise=last_raise, opened=opened)
@@ -454,28 +462,27 @@ def betting_round(
                         print(f"{name} Invalid input. (auto fallback to call {pay}).")
                     else:
                         print(f"{name} Invalid input. (auto fallback to call {pay}).")
-                        print_stacks_and_pot()
+                    if name != human_name: print_stacks_and_pot()
                     pending.discard(name)
                     actor = (actor + 1) % len(active_players)
                 else:
                     if logger:
-                        logger.log_action(street, name, "raise",
-                            to_call_before=to_call, stack_before=stack,
-                            amount=pay, stack_after=player.money,
+                        logger.log_action(street, name, "fold",
+                            to_call_before=to_call_before, stack_before=stack_before,
+                            amount=0, stack_after=player.money,
                             pot_after=pot, contrib_after=contrib[name],
                             last_raise=last_raise, opened=opened)
                     if name == human_name:
                         print(f"{name} Invalid input. (auto fallback to fold).")
                     else:
                         print(f"{name} Invalid input. (auto fallback to fold).")
-                        print_stacks_and_pot()
+                    if name != human_name: print_stacks_and_pot()
                     pending.discard(name)
                     del contrib[name]
                     active_players.remove(player)
                     name_order.remove(name)
                     if len(active_players) == 1:
                         if logger: logger.log_street_end(street, pot, contrib)
-
                         return pot, active_players[0]
                     if actor >= len(active_players):
                         actor = 0
@@ -514,15 +521,40 @@ def play_hand(
 
     pot = 0
     ante_by_player = {}
-    for p in list(active_players):
-        if p.money > 0:
-            ante_amt = min(1, p.money)
-            p.money -= ante_amt
-            pot += ante_amt
-            ante_by_player[p.name] = ante_amt
+    # Post blinds instead of antes
+    n = len(active_players)
+    # Determine SB and BB indices by table size and current order (players[0] is BTN for 3+; heads-up BTN is also SB)
+    if n == 2:
+        sb_i, bb_i = 0, 1
+    else:
+        sb_i, bb_i = 1, 2 if n >= 3 else (0, 1)
+    # Safety clamp
+    sb_i = sb_i % n
+    bb_i = bb_i % n
+    sb_player = active_players[sb_i]
+    bb_player = active_players[bb_i]
+    sb_amt = min(5, sb_player.money)
+    bb_amt = min(10, bb_player.money)
+    if sb_amt > 0:
+        sb_player.money -= sb_amt
+        pot += sb_amt
+        ante_by_player[sb_player.name] = sb_amt
+    if bb_amt > 0:
+        bb_player.money -= bb_amt
+        pot += bb_amt
+        ante_by_player[bb_player.name] = ante_by_player.get(bb_player.name, 0) + bb_amt
+
+    # Prepare preflop contrib and actor
+    preflop_contrib = {p.name: 0 for p in active_players}
+    preflop_contrib[sb_player.name] = sb_amt
+    preflop_contrib[bb_player.name] = bb_amt
+    if n <= 3:
+        preflop_actor = 0
+    else:
+        preflop_actor = 3 % n
 
     deck = Deck(lowest_rank=lowest_rank)
-    detector = PokerScoreDetector()
+
 
     holes: Dict[str, List[Card]] = {p.name: deck.pop_cards(2) for p in active_players}
     board: List[Card] = []
@@ -540,16 +572,15 @@ def play_hand(
     if logger:
         logger.log_board("Preflop", fmt_board(board))
     pot, winner = betting_round(
-        active_players,
-        pot,
-        holes,
-        board,
-        "Preflop",
-        human_name,
-        agent_names,
-        agent_complete,
-        logger=logger
+        active_players, pot, holes, board, "Preflop",
+        human_name, agent_names, agent_complete,
+        logger=logger,
+        initial_contrib=preflop_contrib,
+        start_actor=preflop_actor,
+        opened0=True,
+        last_raise0=max(10, MIN_BET) 
     )
+
     if settle_early(winner, pot):
         return True
 
@@ -619,6 +650,7 @@ def play_hand(
         print(f"{p.name} holes: {fmt_cards(holes[p.name])}")
     print("Board: ", fmt_board(board))
 
+    detector = PokerScoreDetector(lowest_rank=lowest_rank)
     winners, scores = showdown(detector, active_players, holes, board)
     for p in active_players:
         s = scores[p.name]
