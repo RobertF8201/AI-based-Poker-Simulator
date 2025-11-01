@@ -1,7 +1,7 @@
 from typing import Dict, List, Tuple, Optional
 
 from logger import HandLogger
-from agent import agent_policy
+from agent import player_agent, expert_agent
 from state import MIN_BET, CAT_NAMES_HOLDEM
 from entities import Card, Deck, Score, Player, PokerScoreDetector, fmt_cards
 
@@ -158,7 +158,7 @@ def betting_round(
                 desired_amt = 0
         else:
             stacks_now = stacks_snapshot()
-            decision = agent_policy(
+            decision = player_agent(
                 agent_name=name,
                 street=street,
                 holes=holes,
@@ -492,7 +492,6 @@ def play_hand(
     players: List["Player"],
     agent_complete,  # Callable[[str], str]
     lowest_rank: int = 2,
-    reveal_bots_at_showdown: bool = False,
     logger: Optional[HandLogger] = HandLogger("hand_logs.jsonl")
 ) -> bool:
 

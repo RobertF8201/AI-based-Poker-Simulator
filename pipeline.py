@@ -17,7 +17,29 @@ class ChatAnthropic:
         self.base_url = base_url.rstrip("/")
         self.temperature = temperature
 
-    def complete(self, prompt: str) -> str:
+    import requests
+from typing import Optional
+
+class ChatAnthropic:
+    def __init__(self, model: str, api_key: str, base_url: str, temperature: float = 0):
+        self.model = model
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.temperature = float(temperature)
+
+    def complete(
+        self,
+        prompt: str,
+        *,
+        max_tokens: int = 1500,
+        temperature: Optional[float] = None,
+        stream: bool = False,
+        timeout: int = 120,
+    ) -> str:
+        """
+        Call Anthropic Messages API and return the FULL text (not just first line).
+        Accepts optional max_tokens/temperature/stream/timeout to match caller.
+        """
         url = f"{self.base_url}/v1/messages"
         headers = {
             "content-type": "application/json",
@@ -26,24 +48,55 @@ class ChatAnthropic:
         }
         data = {
             "model": self.model,
-            "max_tokens": 64,
-            "temperature": self.temperature,
+            "max_tokens": int(max_tokens),
+            "temperature": float(self.temperature if temperature is None else temperature),
             "messages": [{"role": "user", "content": prompt}],
         }
+
+        if stream:
+            data["stream"] = True
+            with requests.post(url, headers=headers, json=data, timeout=timeout, stream=True) as resp:
+                resp.raise_for_status()
+                parts = []
+                for raw in resp.iter_lines(decode_unicode=True):
+                    if not raw:
+                        continue
+                    if raw.startswith("data:"):
+                        try:
+                            payload = raw[len("data:"):].strip()
+                            if payload == "[DONE]":
+                                break
+                            js = requests.utils.json.loads(payload)
+                            if "delta" in js and isinstance(js["delta"], dict):
+                                parts.append(js["delta"].get("text", ""))
+                            elif "content" in js and isinstance(js["content"], list):
+                                parts.append("".join(seg.get("text", "") for seg in js["content"] if isinstance(seg, dict)))
+                        except Exception:
+                            pass
+                return "".join(parts).strip()
+
         try:
-            resp = requests.post(url, headers=headers, json=data, timeout=45)
+            resp = requests.post(url, headers=headers, json=data, timeout=timeout)
             resp.raise_for_status()
             js = resp.json()
+
             content = js.get("content", [])
-            if content and isinstance(content, list):
+            if isinstance(content, list) and content:
                 text = "".join(
-                    [seg.get("text", "") for seg in content if isinstance(seg, dict)]
+                    seg.get("text", "")
+                    for seg in content
+                    if isinstance(seg, dict)
                 )
-                return text.strip().splitlines()[0]
-            return '{"action":"check","amount":0}'
+                return text.strip()
+
+            if "text" in js and isinstance(js["text"], str):
+                return js["text"].strip()
+
+            return str(js)
+
         except Exception as e:
-            print(f"API invoke failure {e}")
-            return '{"action":"check","amount":0}'
+            print(f"API invoke failure: {e}")
+            return ""
 
 
 def parse_agent_action(raw: str) -> Dict:

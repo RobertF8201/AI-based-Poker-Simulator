@@ -1,7 +1,7 @@
 from typing import Dict, List
 
 from entities import Card, fmt_cards
-from prompt import get_single_player
+from prompt import get_single_player, get_report
 from pipeline import parse_agent_action, normalize_action_ctx
 
 
@@ -50,7 +50,7 @@ def build_single_player_prompt(
     return prompt
 
 
-def agent_policy(
+def player_agent(
     agent_name: str,
     street: str,
     holes: Dict[str, List["Card"]],
@@ -93,3 +93,54 @@ def agent_policy(
         stack=stacks.get(agent_name, 0),
     )
     return {"action": action, "amount": desired_amt}
+
+def _extract_text(resp):    # stream return
+    if resp is None:
+        return ""
+    if isinstance(resp, str):
+        return resp
+    if isinstance(resp, dict):
+        for k in ("text", "content"):
+            if k in resp and isinstance(resp[k], str):
+                return resp[k]
+        if "content" in resp and isinstance(resp["content"], list):
+            return "".join(
+                (blk.get("text") or "") for blk in resp["content"]
+                if isinstance(blk, dict)
+            )
+        return str(resp)
+    if isinstance(resp, (list, tuple)):
+        parts = []
+        for x in resp:
+            if isinstance(x, str):
+                parts.append(x)
+            elif isinstance(x, dict):
+                if "text" in x:
+                    parts.append(x["text"])
+                elif "delta" in x and isinstance(x["delta"], dict):
+                    parts.append(x["delta"].get("text",""))
+        return "".join(parts)
+    return str(resp)
+
+
+def expert_agent(agent_complete, jsonl_path="hand_logs.jsonl", stream=False, max_tokens=1800):
+    prompt = get_report(jsonl_path)
+
+    prompt += (
+        "\n\n---\n"
+        "Instructions: Produce the FULL report now. Do not preface with intentions. "
+        "Start directly with the required sections and complete all subsections in detail. "
+        "Avoid truncation. If necessary, be concise but complete.\n"
+    )
+
+    if stream:
+        chunks = []
+        for chunk in agent_complete(prompt, stream=True, max_tokens=max_tokens):
+            text = _extract_text(chunk)
+            if text:
+                print(text, end="", flush=True)
+                chunks.append(text)
+        return "".join(chunks)
+    else:
+        resp = agent_complete(prompt, max_tokens=max_tokens, stream=False)
+        return _extract_text(resp)
